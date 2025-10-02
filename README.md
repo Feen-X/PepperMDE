@@ -1,8 +1,6 @@
 <div align="center">
-  <h1>Monocular Depth Estimation and Object Detection for Real-Time 3D Object Localization</h1>
-  <h2>Bachelor Project</h2>
-
-
+  <h1>Real-Time Object Localization Using Monocular Depth Estimation and Object Detection</h1>
+  <h2 style="margin-top:0;">a bachelor project</h2>
   <p>Author: Nicklas Mundt</p>
   <p>Date: October 2025</p>
 </div>
