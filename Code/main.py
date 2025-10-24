@@ -30,7 +30,7 @@ device = 0  # 0 for CUDA GPU, -1 for CPU
 # Load Depth Estimation Model
 pipe = pipeline(
     task="depth-estimation",
-    model="depth-anything/Depth-Anything-V2-Small-hf",  # You can pick Small/Medium/Large
+    model="depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf",  # You can pick Small/Medium/Large
     device=device,  # set to -1 for CPU, 0 for first CUDA GPU
     use_fast=True,
     verbose=True
@@ -50,7 +50,7 @@ OD_frame_queue = queue.Queue(maxsize=2) # Inference (dict) → Fusion
 DE_frame_queue = queue.Queue(maxsize=2)     # Depth (dict) → Fusion  
 final_frame_queue = queue.Queue(maxsize=2)     # Fusion → Display
 
-# Video capture thread #
+# VIDEO CAPTURE THREAD #
 def capture_thread():
     global running, img
     capture = cv2.VideoCapture(0)
@@ -69,7 +69,7 @@ def capture_thread():
                 raw_frame_queue.put_nowait(img_frame.copy())
             except queue.Full:
                 pass  # Skip if queue is full, keep latest frame
-            cv2.waitKey(100) # Sleep a bit
+            cv2.waitKey(500) # Sleep a bit
         return
 
     # CAMERA REAL-TIME CAPTURE #
@@ -89,7 +89,7 @@ def capture_thread():
                 pass
     capture.release()
 
-# Depth Estimation thread #
+# DEPTH ESTIMATION THREAD #
 def depth_thread():
     global running
     
@@ -110,12 +110,13 @@ def depth_thread():
             frame_small = frame
 
         # Estimate depth map (use smaller frame)
-        depth_array = estimate_depth(frame_small, pipe=pipe)
+        metric_depth_estimation, depth_array = estimate_depth(frame=frame_small, pipe=pipe)
 
         # Prepare structured payload for depth (include original frame for size info)
         de_payload = {
             "frame": frame,
-            "depth": depth_array,
+            "relative_depth": depth_array,
+            "metric_depth": metric_depth_estimation
         }
 
         # Send depth payload to fusion thread
@@ -129,7 +130,7 @@ def depth_thread():
             except queue.Empty:
                 pass
 
-# YOLO Object Detection thread #
+# OBJECT DETECTION THREAD #
 def YOLO_thread():
     global running
     while running:
@@ -208,16 +209,12 @@ def fusion_thread():
             continue
         
         yolo_annotated = od_payload.get("annotated")
-        depth_map = de_payload.get("depth")
+        depth_color = de_payload.get("relative_depth")
+        metric_depth = de_payload.get("metric_depth")
 
-        # Ensure depth_map is single channel uint8; convert to 3-channel for visualization
-        if depth_map is None:
+        # Ensure that we get metric depth
+        if metric_depth is None:
             continue
-
-        if len(depth_map.shape) == 2:
-            depth_color = cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
-        else:
-            depth_color = depth_map
 
         # Resize depth_color to match yolo_annotated height
         h_y, w_y = yolo_annotated.shape[:2]
@@ -237,8 +234,7 @@ def fusion_thread():
         conf_box_center = od_payload.get("conf_box_center", None)
         
         # Use helper functions
-        roi_mean_depth, roi_max_depth, roi_min_depth, median_depth, mean_depth = ROI_depth_info(depth_map, boxes[0] if boxes else None)
-        # object_dist = distance_to
+        roi_median_depth, max_depth, min_depth, median_depth, mean_depth = ROI_depth_info(metric_depth, boxes[0] if boxes else None)
         
         draw_boxes(depth_with_boxes, boxes, classes=classes, confs=confs, names=names, box_color=(255,0,255), 
                    text_color=(255,0,255), thickness=2, text_scale=0.6)
@@ -258,14 +254,15 @@ def fusion_thread():
         cv2.putText(final_combined, "Depth Estimation", (w_y + 10, h_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         cv2.putText(final_combined, "Combined", (10, h_y * 2 - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        cv2.putText(final_combined, f"Overall median depth: {median_depth:.1f}", (w_y + 50, h_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.putText(final_combined, f"Overall mean depth: {mean_depth:.1f}", (w_y + 50, h_y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        if roi_mean_depth is not None:
-            cv2.putText(final_combined, f"ROI Mean Depth: {roi_mean_depth:.1f}", (w_y + 50, h_y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(final_combined, f"ratio: {roi_mean_depth / median_depth:.2f}", (w_y + 50, h_y + 120), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
+        cv2.putText(final_combined, f"Median depth: {median_depth:.1f}", (w_y + 50, h_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(final_combined, f"Mean depth: {mean_depth:.1f}", (w_y + 50, h_y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(final_combined, f"Max Depth: {max_depth:.1f}", (w_y + 50, h_y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(final_combined, f"Min Depth: {min_depth:.1f}", (w_y + 50, h_y + 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        if roi_median_depth is not None:
+            cv2.putText(final_combined, f"ROI Median Depth: {roi_median_depth:.1f}", (w_y + 50, h_y + 150), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
             
-            if roi_mean_depth / median_depth < 1.6:
-                cv2.putText(final_combined, "Move!", (w_y + 50, h_y + 150), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
+            if roi_median_depth / median_depth > 0.8:
+                cv2.putText(final_combined, "Move!", (w_y + 50, h_y + 180), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
 
         # Send combined result to display
         try:
