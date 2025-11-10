@@ -1,0 +1,22 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/python
+{
+	// "build": {
+	// 	"dockerfile": "Dockerfile"
+	// },
+	// "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/Code,type=bind,consistency=cached",	
+
+	// noVNC setup using docker-compose
+	"name": "Pepper-Environment",
+	"dockerComposeFile": "docker-compose.yml",
+	"service": "pepper-environment",
+	"workspaceFolder": "/workspaces/Code",
+	"postCreateCommand": "bash .devcontainer/post_create_setup.sh",
+	"forwardPorts": [8080]
+	// "customizations": {
+	// 	"extensions": ["ms-toolsai.jupyter"]
+	// }
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+}

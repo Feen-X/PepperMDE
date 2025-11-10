@@ -1,0 +1,11 @@
+psutil
+debugpy
+numpy
+opencv-python
+pupil-apriltags
+graphviz
+pdoc
+qi
+scp
+argcomplete
+openai-whisper

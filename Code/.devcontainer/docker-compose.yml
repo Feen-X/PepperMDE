@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  pepper-environment:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    container_name: pepper-environment
+    volumes:
+      - ../:/workspaces/Code:cached
+      - ~/.cache/torch:/root/.cache/torch
+    environment:
+      - DISPLAY=novnc:0.0
+    depends_on:
+      - novnc
+    networks:
+      - x11
+    command: sleep infinity
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  novnc:
+    image: theasp/novnc:latest
+    environment:
+      - DISPLAY_WIDTH=1920
+      - DISPLAY_HEIGHT=1080
+      - RUN_XTERM=no
+    ports:
+      - "8080:8080"
+    networks:
+      - x11
+
+networks:
+  x11:
+    driver: bridge

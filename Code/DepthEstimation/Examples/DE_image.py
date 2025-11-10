@@ -16,7 +16,7 @@ pipe = pipeline(
 )
 
 image_dir = str(BASE_DIR / ".." / ".." / "Images")
-image = Image.open(image_dir + "/" + "room.jpg").convert("RGB")
+image = Image.open(image_dir + "/" + "cabinet.jpg").convert("RGB")
 
 result = pipe(image)  # Model inference
 

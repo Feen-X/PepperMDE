@@ -1,6 +1,8 @@
 Bvenv/
 Code/DepthEstimation/Depth_Anything_V2/
-Code/Segmentation/Sam21/
+Code/Segmentation/SAM/
+Code/Segmentation/models/
 Code/ObjectDetection/models/
-Litterature/
+Code/tmp/
+Literature/
 __pycache__/

@@ -1,0 +1,30 @@
+{
+    "192.168.1.110": {
+        "id": 1,
+        "username": "nao",
+        "password": "pepper",
+        "port": 5030,
+        "vision_port": 12346
+    },
+    "192.168.1.115": {
+        "id": 2,
+        "username": "nao",
+        "vision_port": 12346,
+        "password": "Sokrates1",
+        "port": 5010
+    },
+    "192.168.1.101": {
+        "id": 3,
+        "username": "nao",
+        "vision_port": 12346,
+        "password": "pepper",
+        "port": 5000
+    },
+    "192.168.1.109": {
+        "id": 4,
+        "username": "nao",
+        "vision_port": 12346,
+        "password": "pepper",
+        "port": 5020
+    }
+}

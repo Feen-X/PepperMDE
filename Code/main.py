@@ -3,6 +3,8 @@ from transformers import pipeline
 from PIL import Image
 import numpy as np
 import cv2
+import time
+import logging
 import threading
 import queue
 from pathlib import Path
@@ -10,97 +12,105 @@ from DepthEstimation.DE_functions import ROI_depth_info, estimate_depth
 from ObjectDetection.OD_functions import draw_boxes, draw_line_to_most_confident
 
 
-#------------------------------------#
-# INITIALIZATION OF MODELS AND PATHS #
-#------------------------------------#
-
-# Base directory = the folder containing this script
+# -------------------- CONFIG -------------------- #
 BASE_DIR = Path(__file__).resolve().parent
+YOLO_model_path = str(BASE_DIR / "ObjectDetection" / "models" / "yolo-world-s-cabinet.pt")
+imgDir = str(BASE_DIR / "Images" / "cabinet1.jpg")
+device = 0  # GPU = 0, CPU = -1
 
-# Paths relative to the script
-YOLO_model_path = str(BASE_DIR / "ObjectDetection" / "models" / "yolo-world-chair.pt") # Pre-trained model path
-imgDir = str(BASE_DIR / "Images" / "chair3.jpg") # Image path if camera is not available
-
-# Load YOLO model
-OD_model = YOLO(YOLO_model_path, verbose=True)
-OD_model.fuse()  # Optional: fuse Conv + BN layers for slightly faster inference
-device = 0  # 0 for CUDA GPU, -1 for CPU
+# Logging setup
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 
-# Load Depth Estimation Model
+# ----------------- GLOBAL STATE ----------------- #
+img = True # If true, forces use of image instead of camera
+running = True
+system_mode = "search"  # "search", "approach", "interact"
+movement_phase_active = False # True when movement phase has begun
+movement_target = None        # last movement target payload (dict)
+
+# Queues
+raw_frame_queue = queue.Queue(maxsize=2)
+OD_frame_queue = queue.Queue(maxsize=2)
+DE_frame_queue = queue.Queue(maxsize=2)
+final_frame_queue = queue.Queue(maxsize=2)
+movement_target_queue = queue.Queue(maxsize=2) # movement controller receives targets here
+movement_done_event = threading.Event()        # set to end current movement phase
+
+
+# ------------------- MODEL LOAD ------------------- #
+OD_model = YOLO(YOLO_model_path)
+OD_model.fuse()
+
 pipe = pipeline(
     task="depth-estimation",
-    model="depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf",  # You can pick Small/Medium/Large
-    device=device,  # set to -1 for CPU, 0 for first CUDA GPU
+    model="depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf",
+    device=device,
     use_fast=True,
     verbose=True
 )
 
-# ------------------------------------#
-# THREADING AND QUEUES FOR PROCESSING #
-# ------------------------------------#
 
-# Shared variables
-img = True # If true, forces use of image instead of camera
-running = True
+# ----------------- MODE HELPERS ----------------- #
+def set_mode(new_mode: str):
+    """Safely switch modes."""
+    global system_mode
+    if new_mode != system_mode:
+        logging.info(f"Mode changed: {system_mode} → {new_mode}")
+        system_mode = new_mode
 
-# Queues for thread communication
-raw_frame_queue = queue.Queue(maxsize=2)      # Capture → Inference & Depth
-OD_frame_queue = queue.Queue(maxsize=2) # Inference (dict) → Fusion
-DE_frame_queue = queue.Queue(maxsize=2)     # Depth (dict) → Fusion  
-final_frame_queue = queue.Queue(maxsize=2)     # Fusion → Display
 
-# VIDEO CAPTURE THREAD #
-def capture_thread():
+# ------------------ THREADS ------------------ #
+def capture_thread(): # Capture thread
     global running, img
     capture = cv2.VideoCapture(0)
-
+    
     # IMAGE CAPTURE #
     if not capture.isOpened() or img is True:
-        print("Error: Could not open camera. Showing image instead.")
         img_frame = cv2.imread(imgDir)
-        divisor = img_frame.shape[0] // 320
+        divisor = img_frame.shape[0] // 540
         img_frame = cv2.resize(img_frame, (img_frame.shape[1] // (divisor if divisor!=0 else 1), img_frame.shape[0] // (divisor if divisor!=0 else 1)))
         if img_frame is None:
-            print(f"Error: Could not load fallback image from {imgDir}.")
+            logging.error(f"Could not load fallback image from {imgDir}.")
             return
         while running:
             try:
                 raw_frame_queue.put_nowait(img_frame.copy())
             except queue.Full:
                 pass  # Skip if queue is full, keep latest frame
-            cv2.waitKey(500) # Sleep a bit
+            time.sleep(0.2)
         return
-
-    # CAMERA REAL-TIME CAPTURE #
+    # REAL-TIME CAPTURE #
     while running:
-        ret, f = capture.read()
+        ret, frame = capture.read()
         if not ret:
             break
-        
         try:
-            raw_frame_queue.put_nowait(f)
+            raw_frame_queue.put_nowait(frame)
         except queue.Full:
             try:
                 # Remove old frame and add new one to keep latest
                 raw_frame_queue.get_nowait()
-                raw_frame_queue.put_nowait(f)
+                raw_frame_queue.put_nowait(frame)
             except queue.Empty:
                 pass
     capture.release()
 
-# DEPTH ESTIMATION THREAD #
-def depth_thread():
-    global running
-    
+def depth_thread(): # Depth Estimation thread
+    global running, system_mode
     while running:
+        # Only run depth estimation in "approach" mode
+        if system_mode != "approach":
+            time.sleep(0.25)
+            continue
+        
         try:
-            # Get frame from capture thread (same raw frame as YOLO)
+            # Get frame from capture thread
             frame = raw_frame_queue.get(timeout=0.1)
         except queue.Empty:
             continue
 
-        # Resize to lower resolution to reduce inference cost (maintain aspect)
+        # Resize to lower resolution to reduce inference cost (maintains aspect)
         target_w = 640
         h, w = frame.shape[:2]
         if w > target_w:
@@ -109,7 +119,7 @@ def depth_thread():
         else:
             frame_small = frame
 
-        # Estimate depth map (use smaller frame)
+        # Estimate depth map
         metric_depth_estimation, depth_array = estimate_depth(frame=frame_small, pipe=pipe)
 
         # Prepare structured payload for depth (include original frame for size info)
@@ -123,54 +133,60 @@ def depth_thread():
         try:
             DE_frame_queue.put_nowait(de_payload)
         except queue.Full:
-            # Remove old payload and add new one to keep latest
             try:
+                # Removes old payload and add new one to keep latest
                 DE_frame_queue.get_nowait()
                 DE_frame_queue.put_nowait(de_payload)
             except queue.Empty:
                 pass
 
-# OBJECT DETECTION THREAD #
-def YOLO_thread():
-    global running
+def YOLO_thread(): # Object Detection thread
+    global running, system_mode
     while running:
         try:
-            # Get frame from capture thread (blocks with timeout)
+            # Get frame from capture thread
             frame = raw_frame_queue.get(timeout=0.1)
         except queue.Empty:
             continue
-            
-        image_center = (frame.shape[1] // 2, frame.shape[0] // 2)
-
-        # Run YOLO (no need to resize manually, YOLO handles it)
+        
+        # Run YOLO
         results = OD_model(frame, device=device, conf=0.7, verbose=False)  
 
-        # Start with the original frame for annotation
+        # Copy original frame for annotation
         annotated = frame.copy()
 
-        # Flatten detection boxes, classes, and confidences in the original order
+        # Get the different outputs from YOLO (flattened) and image center
         boxes = [box.xyxy[0].tolist() for box in results[0].boxes]
         classes = [int(box.cls[0]) for box in results[0].boxes]
         confs = [float(box.conf[0]) for box in results[0].boxes]
+        names = results[0].names
+        image_center = (frame.shape[1] // 2, frame.shape[0] // 2)
 
-        # Draw boxes on the annotated frame using helper
-        draw_boxes(annotated, boxes, classes, confs, names=results[0].names, 
+        # Draw boxes on the annotated frame
+        draw_boxes(annotated, boxes, classes, confs, names=names, 
                    box_color=(255,0,255), text_color=(255,0,255), thickness=2, text_scale=0.6)
 
-        # Draw a line to the most confident detection (prefer 'chair' if available)
-        best_idx, box_center = draw_line_to_most_confident(annotated, image_center, boxes, classes=classes, 
-                                                           confs=confs, names=results[0].names, class_filter='chair', 
-                                                           color=(255,0,0), thickness=2, dot_radius=5)
+        # # Draw a line to the most confident detection
+        # best_idx, box_center = draw_line_to_most_confident(annotated, image_center, boxes, classes=classes, 
+        #                                                    confs=confs, names=names, class_filter='chair', 
+        #                                                    color=(255,0,0), thickness=2, dot_radius=5)
+
+        # --------- FSM Mode switching  --------- #
+        if confs is not None and confs[0] > 0.6:
+            set_mode("approach")
+            logging.info("Detected object with high confidence — switching to APPROACH mode.")
+        else:
+            set_mode("search")
 
         # Prepare structured data with detections and annotated frame
         od_payload = {
-            "frame": frame,               # original frame (BGR)
-            "annotated": annotated,       # annotated frame (BGR)
-            "boxes": [box.xyxy[0].tolist() for box in results[0].boxes],
-            "classes": [int(box.cls[0]) for box in results[0].boxes],
-            "confs": [float(box.conf[0]) for box in results[0].boxes],
-            "conf_box_center": box_center,
-            "names": results[0].names,
+            "frame": frame,                 # original frame (BGR)
+            "annotated": annotated,         # annotated frame (BGR)
+            "boxes": boxes,                 # list of [x1, y1, x2, y2]
+            "classes": classes,             # list of class IDs
+            "confs": confs,                 # list of confidences
+            # "conf_box_center": box_center,  # [x, y] coordinates of the box center
+            "names": names,                 # class names mapping
         }
 
         # Send structured detection data to fusion thread
@@ -185,151 +201,135 @@ def YOLO_thread():
                 pass
 
 
-# Fusion thread - YOLO+Depth #
-def fusion_thread():
-    global running
-
-    od_payload = None
-    de_payload = None
-
+def fusion_thread(): # Fusion thread - YOLO+Depth
+    global running, system_mode
     while running:
+        od_payload = None
+        de_payload = None
         # Try to get latest structured payloads
         try:
             od_payload = OD_frame_queue.get(timeout=0.05)
         except queue.Empty:
-            pass
-
-        try:
-            de_payload = DE_frame_queue.get(timeout=0.05)
-        except queue.Empty:
-            pass
-
-        # Need both payloads to proceed
-        if od_payload is None or de_payload is None:
-            continue
+            continue # No YOLO data, skip iteration
         
-        yolo_annotated = od_payload.get("annotated")
-        depth_color = de_payload.get("relative_depth")
-        metric_depth = de_payload.get("metric_depth")
-
-        # Ensure that we get metric depth
-        if metric_depth is None:
-            continue
-
-        # Resize depth_color to match yolo_annotated height
-        h_y, w_y = yolo_annotated.shape[:2]
-        depth_frame = cv2.resize(depth_color, (w_y, h_y))
-
-        # Top: side-by-side YOLO annotated and depth
-        top_row = cv2.hconcat([yolo_annotated, depth_frame])
-
-        # Bottom: start with the colorized depth frame and draw YOLO boxes on it
-        depth_with_boxes = depth_frame.copy()
-
-        # Use helper to draw boxes onto depth visualization. Provide src_size so helper scales coords.
-        boxes = od_payload.get("boxes", [])
-        classes = od_payload.get("classes", [])
-        confs = od_payload.get("confs", [])
-        names = od_payload.get("names", {})
-        conf_box_center = od_payload.get("conf_box_center", None)
-        
-        # Use helper functions
-        roi_median_depth, max_depth, min_depth, median_depth, mean_depth = ROI_depth_info(metric_depth, boxes[0] if boxes else None)
-        
-        draw_boxes(depth_with_boxes, boxes, classes=classes, confs=confs, names=names, box_color=(255,0,255), 
-                   text_color=(255,0,255), thickness=2, text_scale=0.6)
-        
-        draw_line_to_most_confident(depth_with_boxes, (depth_with_boxes.shape[1]//2, depth_with_boxes.shape[0]//2), 
-                                    boxes, classes=classes, confs=confs, names=names, class_filter='chair', 
-                                    color=(255,0,0), thickness=2, dot_radius=5)
-        
-        # Pad depth_with_boxes to match top_row width (which is 2*w_y)
-        overlay_padded = cv2.copyMakeBorder(depth_with_boxes, 0, 0, 0, top_row.shape[1] - depth_with_boxes.shape[1], cv2.BORDER_CONSTANT, value=[0,0,0])
-        
-        # Stack top and bottom
-        final_combined = cv2.vconcat([top_row, overlay_padded])
-
-        # Add labels
-        cv2.putText(final_combined, "YOLO Detection", (10, h_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(final_combined, "Depth Estimation", (w_y + 10, h_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(final_combined, "Combined", (10, h_y * 2 - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        
-        cv2.putText(final_combined, f"Median depth: {median_depth:.1f}", (w_y + 50, h_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.putText(final_combined, f"Mean depth: {mean_depth:.1f}", (w_y + 50, h_y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.putText(final_combined, f"Max Depth: {max_depth:.1f}", (w_y + 50, h_y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.putText(final_combined, f"Min Depth: {min_depth:.1f}", (w_y + 50, h_y + 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        if roi_median_depth is not None:
-            cv2.putText(final_combined, f"ROI Median Depth: {roi_median_depth:.1f}", (w_y + 50, h_y + 150), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            
-            if roi_median_depth / median_depth > 0.8:
-                cv2.putText(final_combined, "Move!", (w_y + 50, h_y + 180), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 2)
-
-        # Send combined result to display
-        try:
-            final_frame_queue.put_nowait(final_combined)
-        except queue.Full:
+        # ------ SEARCH MODE - Only show YOLO results ------ #
+        if system_mode == "search":
+            frame = od_payload.get("annotated")
+            cv2.putText(frame, "SEARCH MODE", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
             try:
-                final_frame_queue.get_nowait()
-                final_frame_queue.put_nowait(final_combined)
+                final_frame_queue.put_nowait(frame)
+            except queue.Full:
+                pass  # Skip if queue is full
+            continue
+
+        # ----- APPROACH MODE - Combine YOLO and Depth Estimation -----
+        if system_mode == "approach":
+            try:
+                de_payload = DE_frame_queue.get(timeout=0.2)
             except queue.Empty:
-                pass
+                de_payload = None
+        
+            # If we didn’t get depth yet, skip iteration
+            if de_payload is None or de_payload.get("metric_depth") is None:
+                logging.warning("No depth data available yet — waiting for next frame.")
+                continue
+
+            yolo_annotated = od_payload.get("annotated")
+            depth_color = de_payload.get("relative_depth")
+            metric_depth = de_payload.get("metric_depth")
+
+            # Use helper to draw boxes onto depth visualization.
+            boxes = od_payload.get("boxes", [])
+            classes = od_payload.get("classes", [])
+            confs = od_payload.get("confs", [])
+            names = od_payload.get("names", {})
+            # conf_box_center = od_payload.get("conf_box_center", None)
+
+            # Get depth info for the most confident box
+            roi_median_depth, max_depth, min_depth, median_depth, mean_depth = ROI_depth_info(metric_depth, boxes[0] if boxes else None)
+            
+            h_y, w_y = yolo_annotated.shape[:2]
+            depth_frame = cv2.resize(depth_color, (w_y, h_y))
+            display = depth_frame.copy()
+            draw_boxes(display, boxes, classes=classes, confs=confs, names=names, box_color=(255,0,255), 
+                    text_color=(255,0,255), thickness=2, text_scale=0.6)
+            draw_line_to_most_confident(display, (display.shape[1]//2, display.shape[0]//2), 
+                                        boxes, classes=classes, confs=confs, names=names, class_filter='cabinet', 
+                                        color=(255,0,0), thickness=2, dot_radius=5)
+            if roi_median_depth is not None:
+                cv2.putText(display, f"Target Depth: {roi_median_depth:.1f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                
+                if roi_median_depth < 0.8:
+                    set_mode("interact")
+                    logging.info("Reached target — switching to INTERACT mode.")
+            
+            cv2.putText(display, "APPROACH MODE", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
+            
+            try:
+                final_frame_queue.put_nowait(display)
+            except queue.Full:
+                pass  # Skip if queue is full
+
+        # ---------- INTERACT MODE ---------- #
+        elif system_mode == "interact":
+            display = od_payload.get("annotated").copy()
+            cv2.putText(display, "INTERACT MODE", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
+            try:
+                final_frame_queue.put_nowait(display)
+            except queue.Full:
+                pass  # Skip if queue is full
 
 
-# ----------------- #
-# MAIN DISPLAY LOOP #
-# ----------------- #
+# Movement controller thread
+def movement_controller_thread():
+    global system_mode, movement_phase_active, movement_target, movement_target_queue, movement_done_event
+    while running:
+        if system_mode == "approach":
+            try:
+                # Wait for a movement target
+                movement_target = movement_target_queue.get(timeout=1)
+                movement_phase_active = True
+                logging.info(f"Movement target acquired: {movement_target}")
+            except queue.Empty:
+                continue
 
+        # Wait for movement to complete
+        if movement_phase_active:
+            logging.info("Waiting for movement to complete...")
+            movement_done_event.wait()
+            movement_done_event.clear()
+            movement_phase_active = False
+            logging.info("Movement completed.")
+
+
+# ---------- MAIN DISPLAY LOOP ---------- #
 if __name__ == "__main__":
     # Start threads
-    t1 = threading.Thread(target=capture_thread)
-    t2 = threading.Thread(target=YOLO_thread)
-    t3 = threading.Thread(target=depth_thread)
-    t4 = threading.Thread(target=fusion_thread)
-    
-    t1.start()
-    t2.start()
-    t3.start()
-    t4.start()
-
-    # Display loop with FPS counter
-    display_frame_count = 0
-    display_start_time = cv2.getTickCount()
-    tick_frequency = cv2.getTickFrequency()
-    display_fps_display = 0.0
+    threads = [
+        threading.Thread(target=capture_thread),
+        threading.Thread(target=YOLO_thread),
+        threading.Thread(target=depth_thread),
+        threading.Thread(target=fusion_thread),
+        threading.Thread(target=movement_controller_thread)
+    ]
+    for thread in threads: thread.start()
     
     while running:
         try:
-            # Get combined frame from fusion thread (blocks with timeout)
-            combined_frame = final_frame_queue.get(timeout=0.1)
-            
-            # Update FPS counter (every successful get means a new processed frame)
-            display_frame_count += 1
-            current_time = cv2.getTickCount()
-            elapsed_time = (current_time - display_start_time) / tick_frequency
-            
-            # Update FPS display every 0.5 seconds
-            if elapsed_time >= 0.5:
-                display_fps_display = display_frame_count / elapsed_time
-                display_frame_count = 0
-                display_start_time = current_time
-            
-            # Display FPS on the frame (this shows true processing FPS)
-            cv2.putText(combined_frame, f"FPS: {display_fps_display:.1f}", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
-            
-            # Show the combined frame
-            cv2.imshow("YOLO + Depth Estimation", combined_frame)
-            
+            frame = final_frame_queue.get(timeout=0.1)            
+            cv2.imshow("Robot Vision System", frame)
+
         except queue.Empty:
             pass # No new frame available, continue loop
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        # Key handling: 'q' to quit, 'c' to signal movement completion (structure control)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             running = False
-            break
+        elif key == ord('r'):
+            set_mode("search")
+            logging.info("User requested search mode (pressed 'r')")
 
-    # Wait for threads to finish
-    t1.join()
-    t2.join()
-    t3.join()
-    t4.join()
-    cv2.destroyAllWindows()
+    for t in threads: t.join() # Wait for threads to finish
+    cv2.destroyAllWindows() # Close display window
+    

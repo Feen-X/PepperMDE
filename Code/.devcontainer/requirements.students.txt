@@ -1,0 +1,7 @@
+# Add pip packages which is not included in requirements.txt already
+ultralytics
+transformers
+pillow
+jupyter
+openai-clip
+clip
