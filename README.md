@@ -7,7 +7,7 @@
 This repository contains all the relevant files for my Bachelor Project. This includes the code, report, experiments and more. The project focuses on monocular depth estimation and tries to illustrate its potential in robotics by using the Pepper Robot.
 
 <p align="center">
-  <img src="Report/Experiment/PepperHiCompressed.gif" alt="Pepper robot navigating an environment" width="60%"/>
+  <img src="Report/Experiment/PepperHi.gif" alt="Pepper robot navigating an environment" width="60%"/>
 </p>
   
 ## Project Structure
@@ -34,7 +34,7 @@ To run the code, you will need to have [Docker](https://www.docker.com/products/
 
 You also need to download a pre-trained YOLO model for object detection. For this project, the model `yolov11l.pt` was used, which you can find on the [YOLO website](https://docs.ultralytics.com/models/yolo11/). This model should be placed in the `Code/ObjectDetection/models/` directory (create the folder if it does not exist).
 
-Finally, ensure that the correct configurations are set in the `final_main.py` file, such as the YOLO model path, Pepper robot IP address, and any other parameters you wish to adjust.
+Finally, ensure that the correct configurations are set in the `final_main.py` file, such as the YOLO model path, Pepper robot IP address, and any other parameters you wish to adjust (they are adjusted in the top of the file).
 
 ## Getting Started
 To get started with the Perception-Action system, clone the entire repository and navigate to the `Code/` directory
@@ -42,7 +42,7 @@ To get started with the Perception-Action system, clone the entire repository an
 git clone https://github.com/Feen-X/PepperMDE.git
 cd PepperMDE/Code
 ```
-From here, you can either explore the individual modules for depth estimation and object detection (they have their own example scripts), or run the `final_main.py` script to see the integrated system in action. Before running the main script, check if the `IMG_MODE` variable is set to your desired mode of operation (can be changed in the top of the script). If `True`, the system will use images from the `Images/` directory for testing. If `False`, it will connect to the Pepper robot's camera feed, with the specified settings.
+From here, you can either explore the individual modules for depth estimation and object detection (they have their own example scripts), or run the `final_main.py` script to see the integrated system in action. Before running the main script, check if the `IMG_MODE` variable is set to your desired mode of operation (can be changed in the top of the script together with the other parameters). If `True`, the system will use images from the `Images/` directory for testing. If `False`, it will connect to the Pepper robot's camera feed, with the specified settings.
 
 To run the main script, first activate the Docker container (if using VSCode, open the folder in a Dev Container), then execute:
 ```bash
