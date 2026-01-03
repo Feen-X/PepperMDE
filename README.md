@@ -6,11 +6,13 @@
 </div>
 This repository contains all the relevant files for my Bachelor Project. This includes the code, report, experiments and more. The project focuses on monocular depth estimation and tries to illustrate its potential in robotics by using the Pepper Robot.
 
-![Pepper robot navigating an environment](Report/Experiment/PepperLo.gif)
-
+<p align="center">
+  <img src="Report/Experiment/PepperLo.gif" alt="Pepper robot navigating an environment" />
+</p>
+  
 ## Project Structure
 This project is structured into two main directories: `Code/` and `Report/`. The `Code/` directory contains all the source code for depth estimation, object detection, and robot integration, as well as the main file for the Perception-Action system. The `Report/` directory contains the project report, experiment documentation, and related files and images.
-
+```
 PepperMDE/
 ├── Code/
 |   ├── .devcontainer/
@@ -26,7 +28,7 @@ PepperMDE/
 |   └── Report.pdf
 ├── .gitignore
 └── README.md
-
+```
 ## Requirements for the Code
 To run the code, you will need to have [Docker](https://www.docker.com/products/docker-desktop/) installed on your machine. The project uses a Docker container to ensure a consistent environment across different systems. The Dockerfile is located in the `.devcontainer/` directory within the `Code/` folder.
 
