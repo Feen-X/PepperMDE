@@ -7,7 +7,7 @@
 This repository contains all the relevant files for my Bachelor Project. This includes the code, report, experiments and more. The project focuses on monocular depth estimation and tries to illustrate its potential in robotics by using the Pepper Robot.
 
 <p align="center">
-  <img src="Report/Experiment/PepperHi.gif" alt="Pepper robot navigating an environment" width="60%"/>
+  <img src="Report/Experiment/PepperHiCompressed.gif" alt="Pepper robot navigating an environment" width="60%"/>
 </p>
   
 ## Project Structure
