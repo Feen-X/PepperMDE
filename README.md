@@ -60,7 +60,6 @@ To run an experimental trial with the Pepper robot, ensure that the robot is pow
 - The Hugging Face transformers library is utilized to access the monocular depth estimation model, which is based on the work of [Depth Anything V2](https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf).
 - The Pepper robot integration is facilitated by the [NAOqi SDK](http://doc.aldebaran.com/2-4/naoqi/index.html) from SoftBank Robotics.
 - I would also like to thank my supervisor Thomas Bolander for his guidance and support throughout this project.
-I hope you find this repository useful and informative!
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
