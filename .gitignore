@@ -1,8 +1,8 @@
-Bvenv/
 Code/DepthEstimation/Depth_Anything_V2/
 Code/Segmentation/SAM/
 Code/Segmentation/models/
 Code/ObjectDetection/models/
 Code/tmp/
-Literature/
 __pycache__/
+Report/Experiment/Evaluation_raw/
+Report/Experiment/Full_experiment.mp4

@@ -1,3 +1,9 @@
+# OD_functions.py
+'''
+This module is focused around YOLO helper functions. It contains functions for drawing 
+bounding boxes and labels onto images, as well as resizing images for YOLO input.
+'''
+
 import cv2
 
 def draw_boxes(target_frame, boxes, classes=None, confs=None, names=None,
@@ -26,7 +32,7 @@ def draw_boxes(target_frame, boxes, classes=None, confs=None, names=None,
         except Exception:
             continue
 
-        cv2.rectangle(target_frame, (x1, y1), (x2, y2), box_color, thickness)
+        cv2.rectangle(target_frame, (x1, y1), (x2, y2), box_color, thickness+2)
 
         label = None
         cls_idx = None
@@ -55,64 +61,40 @@ def draw_boxes(target_frame, boxes, classes=None, confs=None, names=None,
             label = f"{label_name}{conf_text}".strip()
 
         if label:
-            cv2.putText(target_frame, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, text_scale, text_color, max(1, thickness))
+            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, text_scale, max(1, thickness))[0]
+            text_width, text_height = text_size
+            if y1 - text_height < 0:
+                text_y = y1 + text_height
+            else:
+                text_y = max(y1 - 3, 0)
+            cv2.putText(target_frame, label, (x1, text_y), cv2.FONT_HERSHEY_SIMPLEX, text_scale, text_color, max(1, thickness))
 
 
-def draw_line_to_most_confident(target_frame, image_center, boxes, classes=None, confs=None, names=None,
-                                class_filter=None, color=(255,0,0), thickness=2, dot_radius=5):
+def draw_line_to_most_confident(target_frame, best_box, color=(255,0,0), thickness=2, dot_radius=5):
     """
-    Select the most confident detection (optionally filtered by class name) and draw a line
-    from image_center to the center of that box, plus a filled dot at the box center.
-
-    - boxes: list of [x1,y1,x2,y2]
-    - classes: list of class indices
-    - confs: list of confidences (floats)
-    - names: mapping index->class name (dict or list)
-    - class_filter: optional class name to restrict selection (e.g., 'chair')
-    Returns the selected index and center or (None, None) if nothing selected.
+    Draws a line from the center of target frame to the center of the specified bounding box onto target_frame. Returns the center coordinates of the box.
     """
-    if not boxes:
+    if best_box is None:
         return None, None
-
-    # Build candidate indices
-    indices = list(range(len(boxes)))
-
-    # If class_filter provided, keep only indices matching that class name
-    if class_filter is not None and names is not None and classes is not None:
-        def cls_name_for(i):
-            try:
-                cls_idx = classes[i]
-                if isinstance(names, dict):
-                    return names.get(cls_idx, '')
-                else:
-                    return names[cls_idx] if cls_idx is not None and cls_idx < len(names) else ''
-            except Exception:
-                return ''
-
-        indices = [i for i in indices if cls_name_for(i) == class_filter]
-
-    if not indices:
-        return None, None
-
-    # Choose by highest confidence if confs available, otherwise pick first
-    best_idx = None
-    if confs is not None and len(confs) >= 1:
-        best_idx = max(indices, key=lambda i: confs[i] if i < len(confs) and confs[i] is not None else -1.0)
-    else:
-        best_idx = indices[0]
+    x1, y1, x2, y2 = [int(coord) for coord in best_box]
+    box_center = ((x1 + x2) // 2, (y1 + y2) // 2)
 
     try:
-        x1, y1, x2, y2 = [int(c) for c in boxes[best_idx]]
-    except Exception:
-        return None, None
-
-    box_center = (int((x1 + x2) / 2), int((y1 + y2) / 2))
-
-    try:
-        cv2.line(target_frame, image_center, box_center, color, thickness)
+        cv2.line(target_frame, 
+                 (target_frame.shape[1]//2, target_frame.shape[0]//2), 
+                 box_center, 
+                 color, 
+                 thickness)
         cv2.circle(target_frame, box_center, dot_radius, color, -1)
     except Exception:
         pass
 
-    return best_idx, box_center
+    return box_center
 
+def resize_for_yolo(frame, w=640):
+    '''Resize frame to target width while maintaining aspect ratio for YOLO input.'''
+    h, ww = frame.shape[:2]
+    if ww == w:
+        return frame
+    nh = int(h * (w/ww))
+    return cv2.resize(frame, (w, nh), interpolation=cv2.INTER_AREA)

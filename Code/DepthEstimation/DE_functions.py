@@ -1,3 +1,10 @@
+# DE_functions.py
+'''
+This module contains functions for depth estimation using Hugging Face transformers pipeline.
+It includes functions to estimate depth from an image and to extract depth information from
+a region of interest (ROI) defined by bounding boxes.
+'''
+
 from PIL import Image
 import cv2
 import numpy as np
@@ -30,6 +37,12 @@ def estimate_depth(frame, pipe) -> tuple[np.ndarray, np.ndarray]:
 def ROI_depth_info(depth_map, bbox=None):
     """
     Calculate the median depth within the bounding box region of interest (ROI)
+    Returns:
+    - roi_median_depth: median depth within the bbox ROI (or None if no bbox)
+    - max_depth: maximum depth in the entire depth map
+    - min_depth: minimum depth in the entire depth map
+    - median_depth: median depth in the entire depth map
+    - mean_depth: mean depth in the entire depth map
     """
     median_depth = np.median(depth_map)
     mean_depth = np.mean(depth_map)
