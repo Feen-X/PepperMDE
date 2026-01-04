@@ -2,7 +2,7 @@
   <h1>Monocular Depth Estimation in Robotics</h1>
   <h2>From Survey to Perception–Action with the Pepper Robot</h2>
   <p>Author: Nicklas Mundt</p>
-  <p>Date: October 2025</p>
+  <p>Date: January 2026</p>
 </div>
 This repository contains all the relevant files for my Bachelor Project. This includes the code, report, experiments and more. The project focuses on monocular depth estimation and tries to illustrate its potential in robotics by using the Pepper Robot.
 
@@ -63,3 +63,5 @@ To run an experimental trial with the Pepper robot, ensure that the robot is pow
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Please beware that the `Report.pdf` file itself has its own copyright stated in the PDF.
